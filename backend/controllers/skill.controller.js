@@ -1,20 +1,26 @@
 const Skill = require("../models/skill");
+const cacheService = require("../services/cache.service");
 
 /**
  * SKILL CONTROLLER
  * ----------------------------------------------------
- * Handles:
- * - Adding new skills (admin only)
- * - Getting all skills
- * - Getting skill by ID
- * - Updating skill (admin only)
- * - Deleting skill (admin only)
+ * Manages all operations related to skills.
+ * 
+ * Capabilities:
+ * - Add new skills (Admin)
+ * - Retrieve all skills (with Caching)
+ * - Retrieve skill by ID
+ * - Update/Delete skills (Admin)
  */
 
 
 /**
  * ADD A NEW SKILL (Admin only)
- * /api/skill/add
+ * ----------------------------------------------------
+ * POST /api/skill/add
+ * 
+ * Creates a new skill in the database.
+ * Invalidates "all_skills" cache.
  */
 exports.addSkill = async (req, res) => {
   try {
@@ -37,6 +43,9 @@ exports.addSkill = async (req, res) => {
       description,
     });
 
+    // Invalidate cache
+    await cacheService.del("all_skills");
+
     res.status(201).json({ message: "Skill added successfully", skill });
 
   } catch (error) {
@@ -48,12 +57,32 @@ exports.addSkill = async (req, res) => {
 
 /**
  * GET ALL SKILLS
- * /api/skill/all
+ * ----------------------------------------------------
+ * GET /api/skill/all
+ * 
+ * Retrieves all skills from the database.
+ * Implements Redis caching:
+ * 1. Checks cache for "all_skills" key.
+ * 2. If found, returns cached data.
+ * 3. If not found, queries DB, saves to cache, and returns data.
  */
 exports.getAllSkills = async (req, res) => {
   try {
+    const cacheKey = "all_skills";
+
+    // 1. Check Redis Cache
+    const cachedSkills = await cacheService.get(cacheKey);
+    if (cachedSkills) {
+      return res.json({ skills: cachedSkills, source: "cache" });
+    }
+
+    // 2. Fetch from Database
     const skills = await Skill.find();
-    res.json({ skills });
+
+    // 3. Save to Redis Cache
+    await cacheService.set(cacheKey, skills);
+
+    res.json({ skills, source: "database" });
 
   } catch (error) {
     console.error("Get All Skills Error:", error);
@@ -125,43 +154,43 @@ exports.updateSkill = async (req, res) => {
  * ]
  */
 exports.bulkAddSkills = async (req, res) => {
-    try {
-      // Check admin permission
-      if (req.user.role !== "admin") {
-        return res.status(403).json({ message: "Access denied: Admin only" });
-      }
-  
-      const skills = req.body; // expecting an array
-  
-      if (!Array.isArray(skills)) {
-        return res.status(400).json({ message: "Expected an array of skills" });
-      }
-  
-      // Optional: prevent duplicates by checking existing names
-      const names = skills.map((s) => s.name);
-      const existing = await Skill.find({ name: { $in: names } });
-  
-      if (existing.length > 0) {
-        return res.status(400).json({
-          message: "Some skills already exist",
-          existingSkills: existing.map((s) => s.name)
-        });
-      }
-  
-      // Insert all skills at once
-      const inserted = await Skill.insertMany(skills);
-  
-      res.status(201).json({
-        message: "Skills added successfully",
-        addedCount: inserted.length,
-        skills: inserted
-      });
-  
-    } catch (error) {
-      console.error("Bulk Add Skills Error:", error);
-      res.status(500).json({ message: "Server error" });
+  try {
+    // Check admin permission
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Access denied: Admin only" });
     }
-  };  
+
+    const skills = req.body; // expecting an array
+
+    if (!Array.isArray(skills)) {
+      return res.status(400).json({ message: "Expected an array of skills" });
+    }
+
+    // Optional: prevent duplicates by checking existing names
+    const names = skills.map((s) => s.name);
+    const existing = await Skill.find({ name: { $in: names } });
+
+    if (existing.length > 0) {
+      return res.status(400).json({
+        message: "Some skills already exist",
+        existingSkills: existing.map((s) => s.name)
+      });
+    }
+
+    // Insert all skills at once
+    const inserted = await Skill.insertMany(skills);
+
+    res.status(201).json({
+      message: "Skills added successfully",
+      addedCount: inserted.length,
+      skills: inserted
+    });
+
+  } catch (error) {
+    console.error("Bulk Add Skills Error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
 
 
 /**

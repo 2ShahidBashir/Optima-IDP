@@ -3,20 +3,61 @@ dotenv.config();
 const connectDB = require("./config/db");
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const morgan = require("morgan");
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpecs = require("./config/swagger");
+const logger = require("./config/logger");
 
 const app = express();
 
-// Middlewares
+/**
+ * SECURITY MIDDLEWARE
+ * ----------------------------------------------------
+ * Helmet: Sets various HTTP headers to secure the app.
+ * RateLimit: Prevents brute-force attacks by limiting requests.
+ */
+app.use(helmet());
+
+// Rate Limiting Configuration
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: "Too many requests from this IP, please try again later",
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
+
+// Apply rate limiting to all API routes
+app.use("/api/", limiter);
+
+/**
+ * LOGGING MIDDLEWARE
+ * ----------------------------------------------------
+ * Morgan: HTTP request logger.
+ * Connects to Winston stream to save logs to file.
+ */
+app.use(morgan("combined", { stream: logger.stream }));
+
+// Standard Middlewares
 app.use(cors());
 app.use(express.json());
 
-// Request logging middleware
+// Swagger API Documentation
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+
+// Request logging middleware (Custom)
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  logger.info(`${req.method} ${req.path}`);
   next();
 });
 
-// Routes
+/**
+ * ROUTES
+ * ----------------------------------------------------
+ * Define all API routes here.
+ */
 app.use("/api/auth", require("./routes/auth.routes"));
 app.use("/api/user", require("./routes/user.routes"));
 app.use("/api/skill", require("./routes/skill.routes"));
@@ -27,18 +68,20 @@ app.use("/api/recommend", require("./routes/recommend.routes"));
 
 // Health check route
 app.get("/", (req, res) => {
-  res.json({ 
+  res.json({
     message: "Optima IDP backend is running...",
     status: "healthy",
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    docs: "/api-docs"
   });
 });
 
 // 404 handler for undefined routes
 app.use((req, res) => {
-  res.status(404).json({ 
+  logger.warn(`404 - Route not found: ${req.path}`);
+  res.status(404).json({
     message: "Route not found",
-    path: req.path 
+    path: req.path
   });
 });
 

@@ -14,89 +14,50 @@ const recommenderService = require("../services/recommender.service");
  * 4. Auto-fill recommendedResources + skillsToImprove
  * 5. Save IDP in MongoDB
  */
+const queueService = require("../services/queue.service");
+
+/**
+ * CREATE IDP (ASYNC)
+ * ------------------------------------------------------------
+ * 1. Create IDP in "processing" state
+ * 2. Push job to Redis queue
+ * 3. Return IDP to user immediately
+ * 4. Python worker will pick up job, generate recommendations, and update IDP
+ */
 exports.createIDP = async (req, res) => {
   try {
     const employeeId = req.user.id;
-
-    // Extract basic fields
     const { goals, skillsToImprove = [] } = req.body;
 
-    // 1. Fetch user skills
-    const user = await User.findById(employeeId).populate("skills.skillId");
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Convert user skills for Python format
-    const userSkillsFormatted = user.skills.map(s => ({
-      skillId: String(s.skillId._id),
-      level: s.level
-    }));
-
-    // 2. Fetch all skills from DB
-    const allSkills = await Skill.find();
-
-    // Convert skills for Python
-    const skillsFormatted = allSkills.map(s => ({
-      _id: String(s._id),
-      name: s.name,
-      category: s.category || "",
-      description: s.description || ""
-    }));
-
-    // 3. Fetch all learning resources
-    const allResources = await Resource.find().populate("skill");
-
-    const resourcesFormatted = allResources.map(r => ({
-      _id: String(r._id),
-      title: r.title,
-      type: r.type,
-      difficulty: r.difficulty,
-      url: r.url,
-      provider: r.provider,
-      skill: r.skill
-        ? { _id: String(r.skill._id), name: r.skill.name }
-        : { _id: "", name: "" }
-    }));
-
-    // 4. Prepare Python request body
-    const pythonData = {
-      user_skills: userSkillsFormatted,
-      skills_to_improve: skillsToImprove,
-      performance_reports: [],        // OPTIONAL (we can integrate later)
-      resources: resourcesFormatted,
-      skills: skillsFormatted,
-      user_skills_data: [],           // OPTIONAL (no co-occurrence yet)
-      limit: 10
-    };
-
-    // 5. Call Python recommender
-    const aiResponse = await recommenderService.getRecommendedResources(pythonData);
-
-    // Extract recommended resource IDs
-    const recommendedResourceIds = aiResponse.recommendations.map(r => r.resourceId);
-
-    // 6. Create new IDP with AI data
+    // 1. Create IDP immediately with "processing" status
     const newIDP = await IDP.create({
       employee: employeeId,
       goals,
-      skillsToImprove,                 // Later: AI can refine this
-      recommendedResources: recommendedResourceIds,
-      status: "draft"
+      skillsToImprove,
+      recommendedResources: [], // Will be filled by worker
+      status: "processing"
     });
 
+    // 2. Push job to queue
+    const jobAdded = await queueService.addJob({
+      userId: employeeId,
+      idpId: newIDP._id
+    });
+
+    if (!jobAdded) {
+      // Fallback or error handling if queue fails
+      // For now, just log it. In production, might want to retry or fail.
+      console.error("Failed to add job to queue");
+    }
+
     res.status(201).json({
-      message: "AI-powered IDP created successfully",
-      aiSummary: {
-        recommendedResources: aiResponse.recommendations,
-        skillsToImprove: aiResponse.skills_to_improve
-      },
-      idp: newIDP
+      message: "IDP created. Generating recommendations in background...",
+      idp: newIDP,
+      status: "processing"
     });
 
   } catch (error) {
-    console.error("AI Create IDP Error:", error);
+    console.error("Create IDP Error:", error);
     res.status(500).json({ message: "Failed to create IDP", error: error.message });
   }
 };

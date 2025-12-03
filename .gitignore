@@ -38,6 +38,7 @@ __pycache__/
 venv/
 env/
 ENV/
+.venv/
 
 # Model files (if large)
 *.pkl
@@ -59,3 +60,5 @@ coverage/
 # Optional eslint cache
 .eslintcache
 
+# Exclude backend tests
+backend/tests/

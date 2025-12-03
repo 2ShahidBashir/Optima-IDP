@@ -1,21 +1,27 @@
 const Resource = require("../models/resource");
+const cacheService = require("../services/cache.service");
 
 /**
  * RESOURCE CONTROLLER
  * ----------------------------------------------------
- * Handles:
- * - Adding single resource (admin only)
- * - Bulk adding resources (admin only)
- * - Getting all resources
- * - Getting resources by skill
- * - Updating resource (admin only)
- * - Deleting resource (admin only)
+ * Manages all operations related to learning resources.
+ * 
+ * Capabilities:
+ * - Add new resources (Admin)
+ * - Bulk import resources (Admin)
+ * - Retrieve all resources (with Caching)
+ * - Filter resources by skill
+ * - Update/Delete resources (Admin)
  */
 
 
 /**
  * ADD SINGLE RESOURCE (Admin only)
- * /api/resource/add
+ * ----------------------------------------------------
+ * POST /api/resource/add
+ * 
+ * Creates a new learning resource in the database.
+ * Invalidates the "all_resources" cache to ensure freshness.
  */
 exports.addResource = async (req, res) => {
   try {
@@ -37,6 +43,9 @@ exports.addResource = async (req, res) => {
       duration
     });
 
+    // Invalidate cache since data changed
+    await cacheService.del("all_resources");
+
     res.status(201).json({ message: "Resource added successfully", resource });
 
   } catch (error) {
@@ -48,7 +57,11 @@ exports.addResource = async (req, res) => {
 
 /**
  * BULK ADD RESOURCES (Admin only)
- * /api/resource/bulk-add
+ * ----------------------------------------------------
+ * POST /api/resource/bulk-add
+ * 
+ * Efficiently inserts multiple resources at once.
+ * Invalidates the "all_resources" cache.
  */
 exports.bulkAddResources = async (req, res) => {
   try {
@@ -66,6 +79,9 @@ exports.bulkAddResources = async (req, res) => {
     // Insert all resources at once
     const inserted = await Resource.insertMany(resources);
 
+    // Invalidate cache
+    await cacheService.del("all_resources");
+
     res.status(201).json({
       message: "Resources added successfully",
       addedCount: inserted.length,
@@ -81,12 +97,32 @@ exports.bulkAddResources = async (req, res) => {
 
 /**
  * GET ALL RESOURCES
- * /api/resource/all
+ * ----------------------------------------------------
+ * GET /api/resource/all
+ * 
+ * Retrieves all resources from the database.
+ * Implements Redis caching:
+ * 1. Checks cache for "all_resources" key.
+ * 2. If found, returns cached data (fast).
+ * 3. If not found, queries DB, saves to cache (1 hour), and returns data.
  */
 exports.getAllResources = async (req, res) => {
   try {
+    const cacheKey = "all_resources";
+
+    // 1. Check Redis Cache
+    const cachedResources = await cacheService.get(cacheKey);
+    if (cachedResources) {
+      return res.json({ resources: cachedResources, source: "cache" });
+    }
+
+    // 2. Fetch from Database (if not in cache)
     const resources = await Resource.find().populate("skill"); // include full skill data
-    res.json({ resources });
+
+    // 3. Save to Redis Cache
+    await cacheService.set(cacheKey, resources);
+
+    res.json({ resources, source: "database" });
 
   } catch (error) {
     console.error("Get All Resources Error:", error);
