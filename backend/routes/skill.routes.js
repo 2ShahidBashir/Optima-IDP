@@ -16,8 +16,8 @@ const authMiddleware = require("../middleware/authMiddleware");
  * /delete/:id → Delete skill (admin only)
  */
 
-// Add a new skill (admin only)
-router.post("/add", authMiddleware, roleMiddleware("admin"), skillController.addSkill);
+// Add a new skill (admin or manager)
+router.post("/add", authMiddleware, roleMiddleware("admin", "manager"), skillController.addSkill);
 
 // Get all skills
 router.get("/all", authMiddleware, skillController.getAllSkills);
@@ -25,14 +25,14 @@ router.get("/all", authMiddleware, skillController.getAllSkills);
 // Get a single skill by ID
 router.get("/:id", authMiddleware, skillController.getSkillById);
 
-// Update a skill (admin only)
-router.put("/update/:id", authMiddleware, roleMiddleware("admin"), skillController.updateSkill);
+// Update a skill (admin or manager)
+router.put("/update/:id", authMiddleware, roleMiddleware("admin", "manager"), skillController.updateSkill);
 
-// Delete a skill (admin only)
-router.delete("/delete/:id", authMiddleware, roleMiddleware("admin"), skillController.deleteSkill);
+// Delete a skill (admin or manager)
+router.delete("/delete/:id", authMiddleware, roleMiddleware("admin", "manager"), skillController.deleteSkill);
 
-// Bulk add skills (admin only)
-router.post("/bulk-add", authMiddleware, roleMiddleware("admin"), skillController.bulkAddSkills);
+// Bulk add skills (admin or manager)
+router.post("/bulk-add", authMiddleware, roleMiddleware("admin", "manager"), skillController.bulkAddSkills);
 
 
 module.exports = router;

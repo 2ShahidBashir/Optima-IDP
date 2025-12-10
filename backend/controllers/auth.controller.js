@@ -1,6 +1,10 @@
 const User = require("../models/user");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+const { sendMail } = require("../services/mail.service");
+const { getWelcomeEmail, getPasswordResetEmail } = require("../utils/emailTemplates");
+const logger = require("../config/logger");
 
 /**
  * AUTH CONTROLLER
@@ -15,7 +19,7 @@ const jwt = require("jsonwebtoken");
 // REGISTER a new user
 exports.register = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, company, role, adminSecret } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({ email });
@@ -23,20 +27,143 @@ exports.register = async (req, res) => {
       return res.status(400).json({ message: "User already exists" });
     }
 
+    // Role Assignment Logic
+    let userRole = 'employee';
+
+    // STRICT check for Admin role
+    // If user requests to be admin, strict check the secret.
+    if (role === 'admin') {
+      if (!adminSecret || adminSecret !== process.env.ADMIN_SECRET) {
+        // Log the attempt for debugging/security
+        logger.warn(`Failed Admin registration attempt for ${email}. Secret provided: ${adminSecret ? 'Yes (Invalid)' : 'No'}`);
+        return res.status(403).json({ message: "Invalid Admin Secret Key. Registration denied." });
+      }
+      userRole = 'admin';
+    } else {
+      // If role is undefined or 'employee', force it to employee
+      userRole = 'employee';
+
+      // VALIDATE COMPANY EXISTENCE
+      // Employees can only join companies that have already been created by an Admin
+      const normalizedCompany = company.toLowerCase().trim();
+      const companyAdmin = await User.findOne({
+        company: normalizedCompany,
+        role: 'admin'
+      });
+
+      if (!companyAdmin) {
+        return res.status(400).json({
+          message: "Company not registered. Please contact your administrator to set up the organization first."
+        });
+      }
+    }
+
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create new user
     const user = await User.create({
       name,
       email,
       password: hashedPassword,
-      role,
+      company: company.toLowerCase().trim(), // Normalize company name
+      role: userRole,
+      isVerified: true // Everyone is verified by default now
     });
 
-    res.status(201).json({ message: "User registered successfully", user });
+    // Send styled welcome email
+    try {
+      const emailHtml = getWelcomeEmail(name, company, userRole);
+      const emailSubject = userRole === 'admin'
+        ? "Welcome to Optima IDP - Admin Access Granted"
+        : "Welcome to Optima IDP - Registration Successful";
+
+      await sendMail({
+        to: email,
+        subject: emailSubject,
+        text: `Welcome to Optima IDP, ${name}! You have successfully registered as ${userRole}.`, // Fallback text
+        html: emailHtml
+      });
+      logger.info(`Welcome email sent to ${userRole}: ${email}`);
+    } catch (mailError) {
+      logger.error(`Failed to send welcome email to ${email}: ${mailError.message}`);
+    }
+
+    res.status(201).json({
+      message: "User registered successfully",
+      user
+    });
   } catch (error) {
     console.error("Register Error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// FORGOT PASSWORD - Send reset link
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const user = await User.findOne({ email });
+    // Always respond success to avoid email enumeration
+    if (!user) {
+      return res.json({ message: "If that email exists, a reset link has been sent" });
+    }
+
+    const token = crypto.randomBytes(32).toString("hex");
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+    const expires = Date.now() + 60 * 60 * 1000; // 1 hour
+
+    user.resetPasswordToken = hashedToken;
+    user.resetPasswordExpires = expires;
+    await user.save();
+
+    const frontendBase = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
+    const resetUrl = `${frontendBase}/reset-password?token=${token}`;
+
+    try {
+      const emailHtml = getPasswordResetEmail(resetUrl);
+      await sendMail({
+        to: email,
+        subject: "Reset your Optima IDP password",
+        text: `Reset your password using this link: ${resetUrl}`,
+        html: emailHtml
+      });
+    } catch (mailErr) {
+      logger.error(`Failed to send reset email: ${mailErr.message}`);
+    }
+
+    res.json({ message: "If that email exists, a reset link has been sent" });
+  } catch (error) {
+    console.error("Forgot Password Error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// RESET PASSWORD - Validate token and update password
+exports.resetPassword = async (req, res) => {
+  try {
+    const { token, password } = req.body;
+
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+    const user = await User.findOne({
+      resetPasswordToken: hashedToken,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ message: "Invalid or expired reset token" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    user.password = hashedPassword;
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
+    user.refreshToken = null; // force re-login on other devices
+    await user.save();
+
+    res.json({ message: "Password reset successful. Please log in." });
+  } catch (error) {
+    console.error("Reset Password Error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -50,6 +177,11 @@ exports.login = async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ message: "Invalid email or password" });
+    }
+
+    // Check approval status
+    if (!user.isVerified) {
+      return res.status(403).json({ message: "Account pending approval from Admin" });
     }
 
     // Compare password
@@ -104,7 +236,8 @@ exports.login = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        company: user.company
       }
     });
 
@@ -241,6 +374,26 @@ exports.logout = async (req, res) => {
 
   } catch (error) {
     console.error("Logout Error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ADMIN: Approve a user (Manager)
+exports.approveUser = async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.isVerified = true;
+    await user.save();
+
+    res.json({ message: `User ${user.name} approved successfully`, user });
+  } catch (error) {
+    console.error("Approve User Error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };

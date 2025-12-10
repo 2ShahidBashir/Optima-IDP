@@ -40,10 +40,13 @@ app.use("/api/", limiter);
  */
 app.use(morgan("combined", { stream: logger.stream }));
 
+const path = require("path"); // Add path import
+
 // Standard Middlewares
 app.use(cors());
 app.use(express.json());
-
+// Serve uploads statically
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // Swagger API Documentation
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
 
@@ -64,7 +67,9 @@ app.use("/api/skill", require("./routes/skill.routes"));
 app.use("/api/resource", require("./routes/resource.routes"));
 app.use("/api/idp", require("./routes/idp.routes"));
 app.use("/api/performance", require("./routes/performance.routes"));
+app.use("/api/recommender", require("./routes/recommender.routes"));
 app.use("/api/recommend", require("./routes/recommend.routes"));
+
 
 // Root welcome route
 app.get("/", (req, res) => {

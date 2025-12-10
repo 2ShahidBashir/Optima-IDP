@@ -48,6 +48,14 @@ router.put(
   idpController.updateIDP
 );
 
+// Manager sees all pending IDPs (Team View simulation)
+router.get(
+  "/pending",
+  authMiddleware,
+  roleMiddleware("manager", "admin"),
+  idpController.getPendingIDPs
+);
+
 // Manager approves an IDP
 router.put(
   "/approve/:id",
@@ -62,6 +70,30 @@ router.get(
   authMiddleware,
   roleMiddleware("admin"),
   idpController.getAllIDPs
+);
+
+// Metrics: Employee Stats
+router.get(
+  "/metrics/employee",
+  authMiddleware,
+  roleMiddleware("employee", "manager", "admin"),
+  idpController.getEmployeeMetrics
+);
+
+// Metrics: Team Stats (Manager)
+router.get(
+  "/metrics/team",
+  authMiddleware,
+  roleMiddleware("manager", "admin"),
+  idpController.getTeamMetrics
+);
+
+// Metrics: System Stats (Admin)
+router.get(
+  "/metrics/system",
+  authMiddleware,
+  roleMiddleware("admin"),
+  idpController.getSystemStats
 );
 
 module.exports = router;

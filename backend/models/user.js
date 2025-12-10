@@ -34,6 +34,13 @@ const UserSchema = new mongoose.Schema(
       trim: true
     },
 
+    // Company Name for Multi-Tenancy
+    company: {
+      type: String,
+      required: true,
+      trim: true
+    },
+
     // Password will be hashed using bcrypt before saving
     password: {
       type: String,
@@ -45,6 +52,36 @@ const UserSchema = new mongoose.Schema(
       type: String,
       enum: ["employee", "manager", "admin"],
       default: "employee", // default role is employee
+    },
+
+    // Profile Picture
+    avatar: {
+      data: Buffer,
+      contentType: String
+    },
+
+    // User Preferences
+    preferences: {
+      emailNotifications: {
+        type: Boolean,
+        default: true
+      },
+      darkMode: {
+        type: Boolean,
+        default: true
+      },
+      twoFactorEnabled: {
+        type: Boolean,
+        default: false
+      },
+      weeklyReports: {
+        type: Boolean,
+        default: true
+      },
+      systemBranding: {
+        type: Boolean,
+        default: true
+      }
     },
 
     /**
@@ -78,6 +115,33 @@ const UserSchema = new mongoose.Schema(
     refreshToken: {
       type: String,
       default: null,
+    },
+
+    // Password reset workflow
+    resetPasswordToken: {
+      type: String,
+      default: null
+    },
+    resetPasswordExpires: {
+      type: Date,
+      default: null
+    },
+
+    // Account Approval Status
+    // - Employees: Auto-verified (true)
+    // - Admins: Auto-verified via secret (true)
+    // - Managers: Pending approval (false)
+    isVerified: {
+      type: Boolean,
+      default: true
+    },
+
+    // Pending Profile Update Request
+    profileUpdateRequest: {
+      field: { type: String, enum: ['name'], default: null },
+      value: { type: String, default: null },
+      status: { type: String, enum: ['pending', 'approved', 'rejected'], default: null },
+      requestedAt: { type: Date, default: null }
     }
   },
 

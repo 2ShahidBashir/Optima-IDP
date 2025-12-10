@@ -34,6 +34,18 @@ router.post("/register", validate(schemas.register), authController.register);
 router.post("/login", validate(schemas.login), authController.login);
 
 /**
+ * FORGOT PASSWORD ROUTE
+ * POST /api/auth/forgot-password
+ */
+router.post("/forgot-password", validate(schemas.forgotPassword), authController.forgotPassword);
+
+/**
+ * RESET PASSWORD ROUTE
+ * POST /api/auth/reset-password
+ */
+router.post("/reset-password", validate(schemas.resetPassword), authController.resetPassword);
+
+/**
  * REFRESH TOKEN ROUTE
  * --------------------------------------
  * POST /api/auth/refresh

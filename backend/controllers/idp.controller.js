@@ -27,22 +27,33 @@ const queueService = require("../services/queue.service");
 exports.createIDP = async (req, res) => {
   try {
     const employeeId = req.user.id;
-    const { goals, skillsToImprove = [] } = req.body;
+    const { goals, skillsToImprove = [], recommendedResources = [] } = req.body;
 
-    // 1. Create IDP immediately with "processing" status
+    // 1. Create IDP
+    // If resources are provided (from the AI wizard), set status to 'pending' (or 'draft') instead of 'processing'
+    // and skip the background queue.
+    const initialStatus = recommendedResources.length > 0 ? "draft" : "processing";
+
     const newIDP = await IDP.create({
       employee: employeeId,
       goals,
       skillsToImprove,
-      recommendedResources: [], // Will be filled by worker
-      status: "processing"
+      recommendedResources,
+      status: initialStatus
     });
 
-    // 2. Push job to queue
-    const jobAdded = await queueService.addJob({
-      userId: employeeId,
-      idpId: newIDP._id
-    });
+    // 2. Push job to queue ONLY if no resources were provided (old flow)
+    if (recommendedResources.length === 0) {
+      const jobAdded = await queueService.addJob({
+        userId: employeeId,
+        idpId: newIDP._id
+      });
+
+      if (!jobAdded) {
+        console.error("Failed to add job to queue");
+      }
+    }
+
 
     if (!jobAdded) {
       // Fallback or error handling if queue fails
@@ -231,18 +242,25 @@ exports.updateIDP = async (req, res) => {
 exports.approveIDP = async (req, res) => {
   try {
     const idpId = req.params.id;
+    const { status, managerFeedback } = req.body;
 
     const idp = await IDP.findById(idpId);
     if (!idp) {
       return res.status(404).json({ message: "IDP not found" });
     }
 
-    idp.status = "approved";
-    idp.managerFeedback = req.body.managerFeedback || "";
+    // Allow Approved or Rejected
+    if (status && ["approved", "rejected", "needs_revision"].includes(status)) {
+      idp.status = status;
+    } else {
+      idp.status = "approved"; // Default fallback
+    }
+
+    idp.managerFeedback = managerFeedback || "";
     await idp.save();
 
     res.json({
-      message: "IDP approved successfully",
+      message: `IDP ${idp.status} successfully`,
       idp
     });
 
@@ -251,6 +269,30 @@ exports.approveIDP = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+/**
+ * GET PENDING IDPs (Manager View)
+ * GET /api/idp/pending
+ * Returns all IDPs with status 'draft' or 'pending'
+ */
+exports.getPendingIDPs = async (req, res) => {
+  try {
+    // In a real app, we would filter by company or direct reports
+    // For this project, we fetch all pending/draft IDPs
+    const idps = await IDP.find({
+      status: { $in: ["draft", "pending", "processing"] }
+    })
+      .populate("employee", "name email avatar") // Fetch employee details
+      .populate("skillsToImprove.skill", "name")
+      .sort({ createdAt: -1 });
+
+    res.json({ idps });
+  } catch (error) {
+    console.error("Get Pending IDPs Error:", error);
+    res.status(500).json({ message: "Failed to fetch pending IDPs" });
+  }
+};
+
 
 
 
@@ -269,6 +311,138 @@ exports.getAllIDPs = async (req, res) => {
 
   } catch (error) {
     console.error("Get All IDPs Error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+/**
+ * GET EMPLOYEE METRICS
+ * GET /api/idp/metrics/employee
+ */
+exports.getEmployeeMetrics = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const totalIDPs = await IDP.countDocuments({ employee: userId });
+    const completedIDPs = await IDP.countDocuments({ employee: userId, status: 'completed' });
+    const inProgressIDPs = await IDP.countDocuments({
+      employee: userId,
+      status: { $in: ['approved', 'processing', 'pending', 'draft'] }
+    });
+
+    // Derive Recent Activity from IDP updates
+    const recentActivityRaw = await IDP.find({ employee: userId })
+      .sort({ updatedAt: -1 })
+      .limit(5)
+      .populate("skillsToImprove.skill");
+
+    const recentActivity = recentActivityRaw.map(idp => ({
+      id: idp._id,
+      action: `Updates on "${idp.skillsToImprove[0]?.skill?.name || 'General Goal'}"`,
+      date: idp.updatedAt,
+      status: idp.status
+    }));
+
+    // Derive Skill Growth from Completed IDPs (Cumulative)
+    // Logic: Every completed IDP adds "1 level" virtual growth for visualization
+    const completedHistory = await IDP.find({ employee: userId, status: 'completed' })
+      .sort({ updatedAt: 1 }); // Oldest first
+
+    let currentLevel = 2; // Baseline
+    const skillGrowth = completedHistory.map(idp => {
+      currentLevel += 0.5; // Arbitrary growth increment per IDP
+      return {
+        month: new Date(idp.updatedAt).toLocaleString('default', { month: 'short' }),
+        level: currentLevel
+      };
+    });
+
+    // If no history, provide a baseline
+    if (skillGrowth.length === 0) {
+      skillGrowth.push({ month: 'Start', level: 2 });
+    }
+
+    res.json({
+      totalIDPs,
+      completedIDPs,
+      inProgressIDPs,
+      skillGrowth,
+      recentActivity
+    });
+  } catch (error) {
+    console.error("Get Employee Metrics Error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+/**
+ * GET TEAM METRICS (Manager)
+ * GET /api/idp/metrics/team
+ */
+exports.getTeamMetrics = async (req, res) => {
+  try {
+    // Manager's Company
+    const manager = await User.findById(req.user.id);
+    const company = manager.company;
+
+    // Find all employees in the same company
+    const teamMembers = await User.find({ company, role: 'employee' });
+    const teamMemberIds = teamMembers.map(u => u._id);
+
+    const totalReports = teamMembers.length;
+
+    // Pending Approvals (Global for team)
+    const pendingApprovals = await IDP.countDocuments({
+      employee: { $in: teamMemberIds },
+      status: { $in: ['draft', 'pending'] }
+    });
+
+    // Team Average Skill (across all their skills)
+    let totalSkillSum = 0;
+    let totalSkillCount = 0;
+
+    teamMembers.forEach(member => {
+      member.skills.forEach(s => {
+        totalSkillSum += s.level;
+        totalSkillCount++;
+      });
+    });
+
+    const teamAvgSkill = totalSkillCount > 0
+      ? (totalSkillSum / totalSkillCount).toFixed(1)
+      : 0;
+
+    res.json({
+      totalReports,
+      pendingApprovals,
+      teamAvgSkill
+    });
+  } catch (error) {
+    console.error("Get Team Metrics Error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+/**
+ * GET SYSTEM METRICS (Admin)
+ * GET /api/idp/metrics/system
+ */
+exports.getSystemStats = async (req, res) => {
+  try {
+    const totalUsers = await User.countDocuments();
+    const activeIDPs = await IDP.countDocuments({ status: { $ne: 'completed' } });
+    const totalResources = await Resource.countDocuments();
+
+    // Check Redis/Service health (Mock logic for now, or check DB connection)
+    const systemStatus = "Healthy";
+
+    res.json({
+      totalUsers,
+      activeIDPs,
+      totalResources,
+      systemStatus
+    });
+  } catch (error) {
+    console.error("Get System Stats Error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };

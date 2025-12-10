@@ -40,16 +40,20 @@ class ResourceRanker:
         self.weights = {
             'skill_gap': 0.35,          # Highest weight: prioritize skills with big gaps
             'skill_relevance': 0.25,    # High weight: skills similar to user's existing skills
-            'difficulty_match': 0.20,    # Medium weight: match user's skill level
-            'resource_type': 0.10,       # Lower weight: slight preference for certain types
-            'skill_similarity': 0.10     # Lower weight: similarity to target skills
+            'difficulty_match': 0.20,   # Medium weight: match user's skill level
+            'collaborative': 0.20,      # NEW: Resources used by similar peers
+            'resource_type': 0.00,      # Reduced to make room for collaborative (was 0.10)
+            'skill_similarity': 0.00    # Reduced to make room for collaborative (was 0.10)
         }
+        # Note: Weights sum to 1.0 (0.35 + 0.25 + 0.20 + 0.20 = 1.0)
+        
         self.persona_overrides = {}
         self.default_persona = {
             "weight_multipliers": {
                 "skill_gap": 1.0,
                 "skill_relevance": 1.0,
                 "difficulty_match": 1.0,
+                "collaborative": 1.0,
                 "resource_type": 1.0,
                 "skill_similarity": 1.0
             },
@@ -81,29 +85,27 @@ class ResourceRanker:
                       resource_features: Dict[str, Any],
                       similarity_matrix: Optional[np.ndarray] = None,
                       skill_to_idx: Optional[Dict[str, int]] = None,
+                      peer_data: Optional[List[Dict[str, Any]]] = None,
                       persona: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Rank resources based on multiple scoring factors.
-        
-        Args:
-            resources: List of resource objects to rank
-            user_skills: User's current skills with levels
-            skills_to_improve: Skills the user needs to improve (from IDP)
-            resource_features: Preprocessed resource features
-            similarity_matrix: Optional precomputed skill similarity matrix
-            skill_to_idx: Optional mapping from skill ID to matrix index
-            
-        Returns:
-            List of ranked resources with scores, sorted by relevance
         """
         ranked_resources = []
         applied_weights, difficulty_offset = self._resolve_persona_settings(persona)
         
         # Build user skill level map for quick lookup
         user_skill_levels = self._build_user_skill_map(user_skills)
+        user_skill_ids = set(user_skill_levels.keys())
         
-        # Build skills to improve map
+        # Build improvement map
         improvement_map = self._build_improvement_map(skills_to_improve)
+        
+        # Pre-compute peer scores if peer data is available
+        resource_peer_scores = {}
+        if peer_data:
+            resource_peer_scores = self._calculate_collaborative_scores(
+                user_skill_ids, peer_data
+            )
         
         for resource in resources:
             resource_id = str(resource.get('_id', ''))
@@ -127,8 +129,11 @@ class ResourceRanker:
                 skill_id, features, user_skill_levels, improvement_map, difficulty_offset
             )
             
-            resource_type_score = features.get('type', 0.7)
+            # Collaborative Score
+            collaborative_score = resource_peer_scores.get(resource_id, 0.0)
             
+            # Legacy scores (kept low/zero weight for now)
+            resource_type_score = features.get('type', 0.7)
             skill_similarity_score = self._calculate_skill_similarity_score(
                 skill_id, skills_to_improve, similarity_matrix, skill_to_idx
             )
@@ -138,9 +143,23 @@ class ResourceRanker:
                 applied_weights['skill_gap'] * skill_gap_score +
                 applied_weights['skill_relevance'] * skill_relevance_score +
                 applied_weights['difficulty_match'] * difficulty_match_score +
-                applied_weights['resource_type'] * resource_type_score +
-                applied_weights['skill_similarity'] * skill_similarity_score
+                applied_weights.get('collaborative', 0.20) * collaborative_score +
+                applied_weights.get('resource_type', 0.0) * resource_type_score +
+                applied_weights.get('skill_similarity', 0.0) * skill_similarity_score
             )
+            
+            ranked_resources.append({
+                'resource': resource,
+                'score': total_score,
+                'breakdown': {
+                    'skill_gap': skill_gap_score,
+                    'skill_relevance': skill_relevance_score,
+                    'difficulty_match': difficulty_match_score,
+                    'collaborative': collaborative_score,
+                    'resource_type': resource_type_score,
+                    'skill_similarity': skill_similarity_score
+                }
+            })
             
             ranked_resources.append({
                 'resource': resource,
@@ -406,4 +425,61 @@ class ResourceRanker:
                 max_similarity = max(max_similarity, weighted_similarity)
         
         return max_similarity
+
+    def _calculate_collaborative_scores(self, 
+                                      user_skill_ids: set, 
+                                      peer_data: List[Dict[str, Any]]) -> Dict[str, float]:
+        """
+        Calculate collaborative scores for resources based on peer similarity.
+        
+        Logic:
+        1. Find peers who have similar skills to the user (Jaccard Similarity).
+        2. Identify resources those similar peers have used.
+        3. Score resources based on peer similarity strength.
+        
+        Args:
+            user_skill_ids: Set of skill IDs the current user possesses.
+            peer_data: List of peer objects {userId, skills: [], resources: []}
+            
+        Returns:
+            Dictionary mapping resource_id -> score (0.0 to 1.0)
+        """
+        resource_scores = {}
+        
+        if not user_skill_ids or not peer_data:
+            return resource_scores
+            
+        for peer in peer_data:
+            peer_skill_ids = set(s.get('skillId') for s in peer.get('skills', []))
+            used_resources = peer.get('resources', [])
+            
+            if not peer_skill_ids or not used_resources:
+                continue
+                
+            # Jaccard Similarity: Intersection / Union
+            intersection = len(user_skill_ids.intersection(peer_skill_ids))
+            union = len(user_skill_ids.union(peer_skill_ids))
+            
+            if union == 0:
+                similarity = 0.0
+            else:
+                similarity = intersection / union
+                
+            # Only consider peers with some similarity
+            if similarity > 0.1:
+                for resource_id in used_resources:
+                    if resource_id not in resource_scores:
+                        resource_scores[resource_id] = 0.0
+                    # Add similarity score to resource
+                    # More similar peers = higher score
+                    resource_scores[resource_id] += similarity
+        
+        # Normalize scores to 0-1 range
+        if resource_scores:
+            max_score = max(resource_scores.values())
+            if max_score > 0:
+                for rid in resource_scores:
+                    resource_scores[rid] = resource_scores[rid] / max_score
+                    
+        return resource_scores
 

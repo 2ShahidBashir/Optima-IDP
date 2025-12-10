@@ -49,7 +49,9 @@ const schemas = {
         name: Joi.string().required().min(2).max(50),
         email: Joi.string().email().required(),
         password: Joi.string().required().min(6),
+        company: Joi.string().required(),
         role: Joi.string().valid('employee', 'manager', 'admin').default('employee'),
+        adminSecret: Joi.string().optional().allow(''), // Allow empty string or optional
         department: Joi.string().optional(),
         title: Joi.string().optional()
     }),
@@ -63,6 +65,21 @@ const schemas = {
     login: Joi.object({
         email: Joi.string().email().required(),
         password: Joi.string().required()
+    }),
+
+    /**
+     * Forgot Password Schema
+     */
+    forgotPassword: Joi.object({
+        email: Joi.string().email().required()
+    }),
+
+    /**
+     * Reset Password Schema
+     */
+    resetPassword: Joi.object({
+        token: Joi.string().required(),
+        password: Joi.string().required().min(8)
     })
 };
 

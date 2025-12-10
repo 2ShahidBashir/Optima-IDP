@@ -38,7 +38,8 @@ class RecommendationRequest(BaseModel):
     performance_reports: Optional[List[Dict[str, Any]]] = []  # Performance data
     resources: List[Dict[str, Any]]  # All available resources
     skills: List[Dict[str, Any]]  # All skills in the system
-    user_skills_data: Optional[List[List[Dict[str, Any]]]] = []  # For co-occurrence
+    user_skills_data: Optional[List[List[Dict[str, Any]]]] = []  # Legacy co-occurrence data
+    peer_data: Optional[List[Dict[str, Any]]] = []  # NEW: Peer skills and resources for Collaborative Filtering
     limit: Optional[int] = 10  # Number of recommendations to return
     persona: Optional[str] = None  # Persona identifier (e.g., 'manager', 'tech_lead')
 
@@ -112,6 +113,7 @@ async def get_resource_recommendations(request: RecommendationRequest):
             resource_features=resource_features,
             similarity_matrix=similarity_matrix,
             skill_to_idx=skill_mapping,
+            peer_data=request.peer_data,  # Pass peer data
             persona=getattr(request, "persona", None)
         )
         
