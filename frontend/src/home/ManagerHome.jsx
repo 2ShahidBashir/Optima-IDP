@@ -4,13 +4,10 @@ import api from '../services/api';
 import {
     Users,
     Calendar,
-    Award,
     Target,
     ArrowRight,
-    Sparkles,
     TrendingUp,
     Clock,
-    CheckCircle2,
     Trash2
 } from 'lucide-react';
 import CreateCheckInModal from '../components/Modals/CreateCheckInModal';
@@ -24,7 +21,6 @@ import ConfirmationModal from '../components/Modals/ConfirmationModal';
 // - Team Overview & Stats.
 // - Department Goal Tracking.
 // - Upcoming Check-ins Management.
-// - Quick Kudos Sending.
 // - Team Join Request Approvals.
 // =================================================================================================
 
@@ -40,11 +36,7 @@ const ManagerHome = ({ user }) => {
     const [pendingRequests, setPendingRequests] = useState([]); // Team join requests
     const [loading, setLoading] = useState(true);
 
-    const [kudosSent, setKudosSent] = useState(false);
-    const [kudosData, setKudosData] = useState({
-        toUserId: '',
-        type: 'High Impact' // Default type
-    });
+
     const [isCheckInModalOpen, setIsCheckInModalOpen] = useState(false);
     const [checkInToDelete, setCheckInToDelete] = useState(null);
     // State Definitions ends here
@@ -116,36 +108,7 @@ const ManagerHome = ({ user }) => {
         }
     };
 
-    // =================================================================================================
-    // Handle Kudos Input Change
-    // -------------------------------------------------------------------------------------------------
-    // Updates local state for kudos form inputs.
-    // =================================================================================================
-    const handleKudosChange = (e) => {
-        setKudosData({ ...kudosData, [e.target.name]: e.target.value });
-    };
 
-    // =================================================================================================
-    // Handle Send Kudos
-    // -------------------------------------------------------------------------------------------------
-    // Submits the Kudos form to the backend.
-    // - Validates form data (implicitly via HTML5 required).
-    // - Sends POST request to /manager/kudos.
-    // - Shows success animation for 3 seconds.
-    // =================================================================================================
-    const handleSendKudos = async (e) => {
-        e.preventDefault();
-        try {
-            await api.post('/manager/kudos', kudosData);
-            setKudosSent(true);
-            setTimeout(() => {
-                setKudosSent(false);
-                setKudosData(prev => ({ ...prev, toUserId: '' })); // Reset selection but keep type
-            }, 3000);
-        } catch (err) {
-            console.error("Failed to send kudos", err);
-        }
-    };
 
     // =================================================================================================
     // Handle Team Request Approval
@@ -370,73 +333,7 @@ const ManagerHome = ({ user }) => {
                         </div>
                     )}
 
-                    {/* ======================= Quick Kudos (Bento Item 4) ======================= */}
-                    {/* 4. Quick Kudos (Interactive Card) */}
-                    <div className="md:col-span-7 bg-gradient-to-br from-indigo-900/40 to-purple-900/40 border border-slate-800 rounded-3xl p-8 relative overflow-hidden">
-                        <div className="absolute top-0 right-0 w-64 h-64 bg-purple-600/20 rounded-full blur-[80px] -z-10" />
 
-                        <div className="flex items-center justify-between mb-6">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-pink-500/20 rounded-lg">
-                                    <Award className="w-6 h-6 text-pink-400" />
-                                </div>
-                                <h3 className="text-lg font-bold text-white">Quick Kudos</h3>
-                            </div>
-                            <div className="flex -space-x-3">
-                                {[1, 2, 3].map(i => (
-                                    <div key={i} className="w-8 h-8 rounded-full bg-slate-700 border-2 border-slate-900 flex items-center justify-center text-xs text-white">
-                                        {String.fromCharCode(64 + i)}
-                                    </div>
-                                ))}
-                                <div className="w-8 h-8 rounded-full bg-slate-800 border-2 border-slate-900 flex items-center justify-center text-xs text-slate-400">+5</div>
-                            </div>
-                        </div>
-
-                        {kudosSent ? (
-                            <div className="h-32 flex flex-col items-center justify-center text-center animate-in fade-in zoom-in duration-300">
-                                <div className="w-12 h-12 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mb-3">
-                                    <CheckCircle2 className="w-6 h-6" />
-                                </div>
-                                <h4 className="text-xl font-bold text-white">Kudos Sent!</h4>
-                                <p className="text-slate-400">Keep the momentum going.</p>
-                            </div>
-                        ) : (
-                            <form onSubmit={handleSendKudos} className="flex gap-4">
-                                <div className="flex-1">
-                                    <select
-                                        name="toUserId"
-                                        value={kudosData.toUserId}
-                                        onChange={handleKudosChange}
-                                        className="w-full bg-slate-950/50 border border-slate-700 text-slate-300 rounded-xl px-4 py-3 focus:outline-none focus:border-purple-500 mb-3"
-                                        required
-                                    >
-                                        <option value="">Select team member...</option>
-                                        {team.map(member => (
-                                            <option key={member._id} value={member._id}>{member.name}</option>
-                                        ))}
-                                    </select>
-                                    <div className="flex gap-2 flex-wrap">
-                                        {['High Impact', 'Fast Learner', 'Team Player', 'Leadership', 'Innovation'].map(type => (
-                                            <button
-                                                key={type}
-                                                type="button"
-                                                onClick={() => setKudosData({ ...kudosData, type })}
-                                                className={`px-3 py-1.5 rounded-lg text-xs border transition-all ${kudosData.type === type ? 'bg-purple-600 border-purple-500 text-white' : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-purple-500'}`}
-                                            >
-                                                {type === 'High Impact' && '🏆 '}
-                                                {type === 'Fast Learner' && '⚡ '}
-                                                {type === 'Team Player' && '🤝 '}
-                                                {type}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                                <button type="submit" className="bg-white text-slate-900 font-bold rounded-xl px-6 hover:bg-purple-50 transition-colors flex items-center gap-2 self-start h-[52px]">
-                                    <Sparkles className="w-4 h-4" /> Send
-                                </button>
-                            </form>
-                        )}
-                    </div>
 
                 </div>
             </div>

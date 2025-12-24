@@ -64,7 +64,6 @@ Base URL: `/api` (typically)
 | :--- | :--- | :--- | :--- |
 | `GET` | `/manager/stats` | Get team skill trends and department stats | Yes (Manager/Admin) |
 | `GET` | `/manager/checkins` | Get upcoming check-ins for team | Yes (Manager/Admin) |
-| `POST` | `/manager/kudos` | Send kudos to a team member | Yes (Manager/Admin) |
 
 ### Employee Dashboard Routes
 | Method | Endpoint | Description | Auth Required |

@@ -172,11 +172,11 @@ exports.getSuggestions = async (req, res) => {
 
         const payload = {
             user_skills: userSkills,
-            target_skills: targetSkills || [],
+            skills_to_improve: targetSkills || [],
             performance_reports: performanceReports,
             resources: formattedResources,
             skills: formattedSkills,
-            user_skills_data: userSkills, // Redundant with user_skills, but kept for consistency if expected by AI
+            user_skills_data: [], // Legacy field, sending empty to avoid 422 error (List[List] expected)
             peer_data: peerData,
             limit: 10,
             persona: user.role,

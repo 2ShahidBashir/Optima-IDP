@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { WelcomeBanner, StatCard, ActivityFeedItem } from '../components/DashboardWidgets';
-import { Target, Award, ArrowRight, Play, Calendar, Zap } from 'lucide-react';
+import { Target, Award, ArrowRight, Play, Calendar } from 'lucide-react';
 import CreateIDPModal from '../components/IDP/CreateIDPModal';
 
 // =================================================================================================
@@ -83,19 +83,7 @@ const EmployeeHome = ({ user }) => {
                     <div className="lg:col-span-2 space-y-8">
 
                         {/* 2. Daily Focus / Quote */}
-                        <div className="bg-gradient-to-r from-purple-900/40 to-blue-900/40 border border-purple-500/20 rounded-2xl p-6 relative overflow-hidden">
-                            <div className="absolute top-0 right-0 p-4 opacity-10">
-                                <Zap className="w-24 h-24 text-yellow-400" />
-                            </div>
-                            <h2 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
-                                <Zap className="w-5 h-5 text-yellow-400 fill-yellow-400" />
-                                Daily Focus
-                            </h2>
-                            <blockquote className="text-lg text-slate-300 italic mb-4 max-w-lg">
-                                "{metrics?.dailyQuote?.text || "The only way to do great work is to love what you do."}"
-                            </blockquote>
-                            <p className="text-sm text-slate-500">- {metrics?.dailyQuote?.author || "Steve Jobs"}</p>
-                        </div>
+
 
                         {/* 3. Quick Stats Row */}
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

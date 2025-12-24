@@ -33,9 +33,12 @@ exports.register = async (req, res) => {
     // STRICT check for Admin role
     // If user requests to be admin, strict check the secret.
     if (role === 'admin') {
-      if (!adminSecret || adminSecret !== process.env.ADMIN_SECRET) {
+      const configSecret = process.env.ADMIN_SECRET ? process.env.ADMIN_SECRET.trim() : "";
+      const inputSecret = adminSecret ? adminSecret.trim() : "";
+
+      if (!inputSecret || inputSecret !== configSecret) {
         // Log the attempt for debugging/security
-        logger.warn(`Failed Admin registration attempt for ${email}. Secret provided: ${adminSecret ? 'Yes (Invalid)' : 'No'}`);
+        logger.warn(`Failed Admin registration attempt for ${email}. Secret provided: ${inputSecret ? 'Yes (Invalid)' : 'No'}`);
         return res.status(403).json({ message: "Invalid Admin Secret Key. Registration denied." });
       }
       userRole = 'admin';
