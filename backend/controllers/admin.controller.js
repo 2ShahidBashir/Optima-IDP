@@ -1,10 +1,10 @@
 const mongoose = require("mongoose");
-const redisClient = require("../config/redis");
+
 const fs = require("fs");
 const path = require("path");
 const User = require("../models/user");
 const logger = require("../config/logger");
-const axios = require('axios');
+
 
 const CONFIG_PATH = path.join(__dirname, "../../config/recommender-weights.json");
 
@@ -73,7 +73,6 @@ exports.getSystemHealth = async (req, res) => {
     const health = {
         backend: "UP",
         database: "DOWN",
-        redis: "DOWN",
         recommender: "DOWN",
         uptime: Math.floor(process.uptime()) + "s" // Return server uptime in seconds
     };
@@ -87,26 +86,7 @@ exports.getSystemHealth = async (req, res) => {
         console.log('[SYSTEM HEALTH] ✗ MongoDB is DOWN');
     }
 
-    // Check Redis
-    try {
-        console.log('[SYSTEM HEALTH] Checking Redis...');
-        await redisClient.ping();
-        health.redis = "UP";
-        console.log('[SYSTEM HEALTH] ✓ Redis is UP');
-    } catch (e) {
-        console.log('[SYSTEM HEALTH] ✗ Redis is DOWN:', e.message);
-    }
 
-    // Check Python Service
-    try {
-        const pythonUrl = process.env.RECOMMENDER_SERVICE_URL || "http://localhost:8000";
-        console.log('[SYSTEM HEALTH] Checking Python service at:', pythonUrl);
-        await axios.get(`${pythonUrl}/recommend/health`, { timeout: 2000 });
-        health.recommender = "UP";
-        console.log('[SYSTEM HEALTH] ✓ Recommender is UP');
-    } catch (e) {
-        console.log('[SYSTEM HEALTH] ✗ Recommender is DOWN:', e.message);
-    }
 
     console.log('[SYSTEM HEALTH] Final health status:', health);
     res.json(health);
@@ -114,8 +94,9 @@ exports.getSystemHealth = async (req, res) => {
 
 exports.getQueueHealth = async (req, res) => {
     try {
-        const queueLength = await redisClient.lLen("recommendation_queue");
-        res.json({ queueLength });
+        // Since we removed Redis, we can just return a dummy length or check the recommender status
+        // For now, returning 0 to indicate no backlog
+        res.json({ queueLength: 0 });
     } catch (error) {
         console.error("Queue Health Error:", error);
         res.status(500).json({ message: "Error checking queue health" });

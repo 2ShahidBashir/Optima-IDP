@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const recommendController = require("../../controllers/recommend.controller");
+
 const recommenderController = require("../../controllers/recommender.controller");
 const authMiddleware = require("../../middleware/authMiddleware");
 
@@ -71,7 +71,7 @@ router.post("/resources", authMiddleware, recommenderController.getSuggestions);
  *       200:
  *         description: List of similar skills
  */
-router.post("/similar-skills", authMiddleware, recommendController.recommendSimilarSkills);
+router.post("/similar-skills", authMiddleware, recommenderController.getSimilarSkills);
 
 /**
  * @swagger

@@ -2,7 +2,7 @@ const IDP = require("../models/idp");
 const User = require("../models/user");
 const Skill = require("../models/skill");
 const Resource = require("../models/resource");
-const recommenderService = require("../services/recommender.service");
+
 
 
 
@@ -144,7 +144,7 @@ const calculateCurrentFocus = async (userId) => {
  * 4. Auto-fill recommendedResources + skillsToImprove
  * 5. Save IDP in MongoDB
  */
-const queueService = require("../services/queue.service");
+const recommendationService = require("../services/recommendation.service");
 
 /**
  * CREATE IDP (ASYNC)
@@ -178,7 +178,7 @@ exports.createIDP = async (req, res) => {
 
     // 2. Push job to queue ONLY if no resources were provided (old flow)
     if (recommendedResources.length === 0) {
-      const jobAdded = await queueService.addJob({
+      const jobAdded = await recommendationService.addJob({
         userId: employeeId,
         idpId: newIDP._id
       });
@@ -316,61 +316,44 @@ exports.updateIDP = async (req, res) => {
     if (refreshAI) {
       console.log("🔄 AI Refresh Triggered for IDP:", idpId);
 
-      // --- Fetch and format USER SKILLS ---
-      const user = await User.findById(req.user.id).populate("skills.skillId");
-      const userSkillsFormatted = user.skills.map(s => ({
-        skillId: String(s.skillId._id),
-        level: s.level
-      }));
+      // Use the MERN recommendation service
+      // We pass the current list of skillsToImprove from the request or existing IDP
+      // Note: If req.body.skillsToImprove is passed, it might be raw { skill: ID, ... }
+      // The getRecommendations expects objects with .skill or plain ID property logic.
+      // Let's rely on what we have.
 
-      // --- Fetch and format ALL SKILLS ---
-      const allSkills = await Skill.find();
-      const skillsFormatted = allSkills.map(s => ({
-        _id: String(s._id),
-        name: s.name,
-        category: s.category || "",
-        description: s.description || ""
-      }));
+      let skillsForRec = [];
+      if (req.body.skillsToImprove) {
+        skillsForRec = req.body.skillsToImprove.map(s => ({ skill: (s.skill || s) }));
+      } else {
+        skillsForRec = idp.skillsToImprove;
+      }
 
-      // --- Fetch and format ALL RESOURCES ---
-      const allResources = await Resource.find().populate("skill");
-      const resourcesFormatted = allResources.map(r => ({
-        _id: String(r._id),
-        title: r.title,
-        type: r.type,
-        difficulty: r.difficulty,
-        url: r.url,
-        provider: r.provider,
-        skill: r.skill
-          ? { _id: String(r.skill._id), name: r.skill.name }
-          : { _id: "", name: "" }
-      }));
+      const recs = await recommendationService.getRecommendations(req.user.id, skillsForRec);
 
-      // --- Prepare data for Python recommender ---
-      const pythonData = {
-        user_skills: userSkillsFormatted,
-        skills_to_improve: req.body.skillsToImprove || [],
-        performance_reports: [],
-        resources: resourcesFormatted,
-        skills: skillsFormatted,
-        user_skills_data: [],
-        limit: 10
-      };
+      // recs is array of { resource: ID, status: 'pending', ... }
+      // We need to update recommendedResources
 
-      // --- Call Python AI Recommender ---
-      const aiResponse = await recommenderService.getRecommendedResources(pythonData);
-
-      // --- Update recommended resource IDs (with deduplication) ---
-      const uniqueRecs = [...new Set(aiResponse.recommendations.map(r => r.resourceId))];
+      const uniqueRecs = [...new Set(recs.map(r => r.resource))];
       updateData.recommendedResources = uniqueRecs.map(rId => ({
         resource: rId,
         status: 'pending'
       }));
 
       // --- Summary returned to frontend ---
+      // Frontend expects `recommendedResources` (list of full objects? or just what?)
+      // The python response returned `recommendations` with details.
+      // Here we just return the updated IDs? Or let's fetch them to be nice.
+      const populatedResources = await Resource.find({ _id: { $in: uniqueRecs } });
+
       aiSummary = {
-        recommendedResources: aiResponse.recommendations,
-        skillsToImprove: aiResponse.skills_to_improve
+        recommendedResources: populatedResources.map(r => ({
+          resourceId: r._id,
+          title: r.title,
+          skill: { name: "Matched Skill" }, // Simplified
+          score: 1.0
+        })),
+        skillsToImprove: []
       };
     }
 

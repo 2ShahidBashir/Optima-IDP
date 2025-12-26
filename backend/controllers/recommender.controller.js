@@ -1,237 +1,52 @@
-const RecommenderService = require("../services/recommender.service");
-const User = require("../models/user");
-const Skill = require("../models/skill");
-const Resource = require("../models/resource");
-const PerformanceReport = require("../models/PerformanceReport");
-const IDP = require("../models/idp");
-const Feedback = require("../models/feedback");
-const fs = require("fs");
-const path = require("path");
-const logger = require("../config/logger"); // Import logger
-
-const CONFIG_PATH = path.join(__dirname, "../../config/recommender-weights.json");
-
-// EXP: Tuned Weights for Better Accuracy
-const DEFAULT_WEIGHTS = {
-    skill_gap: 0.30,         // Slightly reduced
-    skill_relevance: 0.20,   // Reduced to make room for similarity
-    difficulty_match: 0.20,
-    collaborative: 0.15,     // Slightly reduced
-    resource_type: 0.00,
-    skill_similarity: 0.15   // ENABLED: Allow fuzzy matching for goals
-};
-
-// Helper to get company-specific weights
-const getWeights = async (company) => {
-    try {
-        // Find the admin user for this company to get their custom weights
-        const adminUser = await User.findOne({ company, role: 'admin' });
-
-        if (adminUser && adminUser.companySettings && adminUser.companySettings.aiWeights) {
-            return adminUser.companySettings.aiWeights;
-        }
-
-        // Check legacy file (for backward compatibility)
-        if (fs.existsSync(CONFIG_PATH)) {
-            try {
-                return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-            } catch (e) {
-                console.error("Error reading legacy config:", e);
-            }
-        }
-    } catch (e) {
-        console.error("Error getting weights:", e);
-    }
-
-    return DEFAULT_WEIGHTS; // Return defaults if nothing found
-};
-
 exports.getSuggestions = async (req, res) => {
     try {
         const userId = req.user._id;
-        const userCompany = req.user.company;
-        // Expect targetSkills in body, e.g., [{ skillId: "...", targetLevel: 5 }]
         const { targetSkills } = req.body || {};
 
-        // 1. Fetch User Data (Current Skills)
-        logger.info(`DEBUG: Fetching user ${userId}`);
-        const user = await User.findById(userId).populate("skills.skillId").lean();
-        if (!user) {
-            return res.status(404).json({ message: "User not found" });
+        // 1. Determine skills to look for
+        let skillsToQuery = [];
+
+        if (targetSkills && targetSkills.length > 0) {
+            skillsToQuery = targetSkills.map(s => s.skillId);
+        } else {
+            // Default: Fetch user skills and find gaps?
+            // Or just return recent resources?
+            // For now, let's fetch user's skills and recommend intermediate/advanced for them
+            const user = await User.findById(userId).populate('skills.skillId');
+            if (user && user.skills) {
+                skillsToQuery = user.skills.map(s => s.skillId._id);
+            }
         }
-        logger.info("DEBUG: User fetched");
 
-        // 0. Fetch User's Dismissed Resources to Filter Out
-        logger.info("DEBUG: Fetching dismissed resources");
-        const dismissedResources = await Feedback.find({
-            user: userId,
-            action: { $in: ['dismiss', 'dislike'] }
-        }).distinct('resource');
+        // 2. Find Resources
+        // Convert to strings for query
+        const skillIds = skillsToQuery.map(id => String(id));
 
-        const dismissedIds = new Set(dismissedResources.map(id => id.toString()));
-        logger.info(`DEBUG: Dismissed resources fetched: ${dismissedIds.size}`);
-
-        // Python expects: { "skillId": "...", "level": 3 }
-        const userSkills = user.skills
-            .filter(s => s.skillId) // Filter out null populated skills (if skill was deleted)
-            .map(s => ({
-                skillId: s.skillId._id.toString(),
-                level: s.level
-            }));
-        logger.info(`DEBUG: User skills mapped: ${userSkills.length}`);
-
-        // 2. Fetch User Goals (from latest IDP)
-        // We want to send free-text goals to the AI for semantic matching
-        const latestIdp = await IDP.findOne({
-            employee: userId,
-            status: { $in: ['approved', 'pending', 'draft'] }
-        }).sort({ createdAt: -1 }).lean();
-
-        const goalText = latestIdp ? latestIdp.goals : "";
-
-        // 3. Fetch Performance Reports (for context)
-        const reports = await PerformanceReport.find({ employee: userId })
-            .sort({ createdAt: -1 })
-            .limit(5)
-            .lean();
-
-        const performanceReports = reports.map(r => ({
-            ...r,
-            _id: r._id.toString()
-        }));
-
-        // 4. Fetch System Data (All Skills & Resources)
-        const allSkills = await Skill.find({}).lean();
-
-        // FILTER: Only fetch resources created by users in the SAME COMPANY
-        // First, find all users in this company
-        const companyUsers = await User.find({ company: userCompany }).select('_id');
-        const companyUserIds = companyUsers.map(u => u._id);
-
-        // Fetch resources created by these users OR created by system admins (if we had a super-admin concept, but here strictly company)
-        const allResources = await Resource.find({
-            createdBy: { $in: companyUserIds },
-            _id: { $nin: Array.from(dismissedIds) } // Exclude dismissed
-        }).populate("createdBy", "name").lean();
-
-        // 5. Fetch Peer Data (Collaborative Filtering - Same Company Only)
-        // Get all other users in SAME COMPANY and their approved/completed IDPs
-        const allUsers = await User.find({
-            _id: { $ne: userId },
-            company: userCompany
+        const resources = await Resource.find({
+            skill: { $in: skillIds }
         })
-            .select("skills role")
-            .lean();
+            .limit(20)
+            .populate("skill")
+            .populate("createdBy", "name")
+            .sort({ createdAt: -1 });
 
-        const allIDPs = await IDP.find({
-            status: { $in: ["approved", "completed"] },
-            employee: { $in: allUsers.map(u => u._id) } // Only peers from same company
-        }).select("employee recommendedResources").lean();
+        // 3. Format Response to match expected frontend structure (if any)
+        // Frontend likely expects "recommendations" array
+        const recommendations = resources.map(r => ({
+            resourceId: r._id,
+            title: r.title,
+            provider: r.provider,
+            type: r.type,
+            url: r.url,
+            // Add other fields as needed
+            skill: r.skill ? { name: r.skill.name } : {},
+            score: 1.0 // Dummy score
+        }));
 
-        // Create a map of user -> used resources
-        const userResourcesMap = {};
-        allIDPs.forEach(idp => {
-            const empId = idp.employee.toString();
-            if (!userResourcesMap[empId]) userResourcesMap[empId] = new Set();
-            idp.recommendedResources.forEach(rId => userResourcesMap[empId].add(rId.toString()));
+        res.json({
+            recommendations,
+            skillsToImprove: [] // Dummy
         });
-
-        const peerData = allUsers.map(peer => ({
-            userId: peer._id.toString(),
-            skills: peer.skills
-                .filter(s => s.skillId) // Filter invalid skills
-                .map(s => ({
-                    skillId: s.skillId.toString(),
-                    level: s.level || 1
-                })),
-            resources: Array.from(userResourcesMap[peer._id.toString()] || [])
-        })).filter(p => p.resources.length > 0 || p.skills.length > 0);
-
-
-        // Sanitize IDs
-        logger.info("DEBUG: Peer data constructed");
-        const formattedSkills = allSkills.map(s => ({
-            ...s,
-            _id: s._id.toString()
-        }));
-
-        // Sanitize IDs & Enrich Provider
-        const formattedResources = allResources.map(r => ({
-            ...r,
-            _id: r._id.toString(),
-            // IF provider is 'Unknown', use creator's name (safety check for createdBy)
-            provider: (r.provider && r.provider !== 'Unknown')
-                ? r.provider
-                : (r.createdBy && r.createdBy.name ? r.createdBy.name : 'Unknown'),
-            // Safety check for skill
-            skill: r.skill ? { ...r.skill, _id: r.skill.toString() } : null
-        }));
-
-        // 6. Construct Payload
-        const params = await getWeights(user.company);
-
-        const payload = {
-            user_skills: userSkills,
-            skills_to_improve: targetSkills || [],
-            performance_reports: performanceReports,
-            resources: formattedResources,
-            skills: formattedSkills,
-            user_skills_data: [], // Legacy field, sending empty to avoid 422 error (List[List] expected)
-            peer_data: peerData,
-            limit: 10,
-            persona: user.role,
-            custom_weights: params,
-            goal_text: goalText  // NEW: Pass goal text to AI
-        };
-
-        logger.info("DEBUG: Payload constructed, calling AI service...");
-
-        let aiResponse;
-        try {
-            // 7. Call Python Service
-            logger.info(`Calling Python AI Service with goals: ${goalText}`);
-            aiResponse = await RecommenderService.getRecommendedResources(payload);
-        } catch (aiError) {
-            logger.error(`⚠️ Python AI Service Failed (Falling back to static list): ${aiError.message}`);
-            // FALLBACK: Return random resources if AI service is down
-            const shuffled = formattedResources.sort(() => 0.5 - Math.random());
-            aiResponse = {
-                recommendations: shuffled.slice(0, 10).map(r => ({
-                    resourceId: r._id,
-                    title: r.title,
-                    provider: r.provider,
-                    type: r.type,
-                    url: r.url,
-                    duration: r.duration,
-                    cost: r.cost, // Add cost
-                    currency: r.currency, // Add currency
-                    author: r.createdBy ? r.createdBy.name : 'Unknown'
-                }))
-            };
-        }
-
-        // DEDUPLICATE RESPONSE
-        if (aiResponse && aiResponse.recommendations) {
-            const uniqueRecs = [];
-            const seenIds = new Set();
-
-            aiResponse.recommendations.forEach(rec => {
-                const rId = rec.resourceId || rec._id || rec.id;
-                const originalRes = formattedResources.find(fr => fr._id === rId);
-
-                if (originalRes && (!rec.provider || rec.provider === 'Unknown')) {
-                    rec.provider = originalRes.provider;
-                }
-
-                if (rId && !seenIds.has(rId)) {
-                    seenIds.add(rId);
-                    uniqueRecs.push(rec);
-                }
-            });
-            aiResponse.recommendations = uniqueRecs;
-        }
-
-        return res.status(200).json(aiResponse);
 
     } catch (error) {
         logger.error(`Controller Error: ${error.message}`, { stack: error.stack });
@@ -267,5 +82,42 @@ exports.trackFeedback = async (req, res) => {
     } catch (error) {
         console.error("Feedback Error:", error);
         res.status(500).json({ message: "Failed to record feedback" });
+    }
+};
+
+exports.getSimilarSkills = async (req, res) => {
+    try {
+        const { skill_id } = req.body;
+
+        if (!skill_id) {
+            return res.status(400).json({ message: "Missing skill_id" });
+        }
+
+        const skill = await Skill.findById(skill_id);
+        if (!skill) {
+            return res.status(404).json({ message: "Skill not found" });
+        }
+
+        // Find skills in same category
+        const similar = await Skill.find({
+            category: skill.category,
+            _id: { $ne: skill._id }
+        }).limit(5);
+
+        // Format
+        const result = {
+            similar_skills: similar.map(s => ({
+                id: s._id,
+                name: s.name,
+                category: s.category,
+                similarity: 0.9 // Dummy score
+            }))
+        };
+
+        res.json(result);
+
+    } catch (error) {
+        console.error("Similar Skills Error:", error);
+        res.status(500).json({ message: "Failed to fetch similar skills" });
     }
 };
