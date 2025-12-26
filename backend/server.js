@@ -22,7 +22,8 @@ app.use(cors({
   origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+  optionsSuccessStatus: 200
 }));
 
 /**
@@ -82,8 +83,7 @@ app.use("/api/files", require("./routes/common/file.routes")); // New GridFS fil
 app.use("/api/idp", require("./routes/emp/idp.routes"));
 app.use("/api/performance", require("./routes/emp/performance.routes"));
 app.use("/api/emp-dashboard", require("./routes/emp/dashboard.routes"));
-app.use("/api/recommender", require("./routes/common/recommender.routes"));
-app.use("/api/recommend", require("./routes/common/recommend.routes"));
+
 app.use("/api/admin", require("./routes/admin/admin.routes"));
 app.use("/api/manager", require("./routes/manager/manager.routes"));
 app.use("/api/announcements", require("./routes/common/announcement.routes")); // Note: Check if this was common or admin in moves. Based on file listing it is in common.
