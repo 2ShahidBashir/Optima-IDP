@@ -27,7 +27,13 @@ app.use(cors({
 
     // Add environment variable origins
     if (process.env.ALLOWED_ORIGINS) {
-      const envOrigins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim());
+      const envOrigins = process.env.ALLOWED_ORIGINS.split(',').map(url => {
+        let origin = url.trim();
+        if (!origin.startsWith('http')) {
+          origin = `https://${origin}`;
+        }
+        return origin;
+      });
       allowedOrigins.push(...envOrigins);
     }
 

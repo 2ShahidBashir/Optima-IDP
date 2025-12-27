@@ -1,6 +1,14 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001/api';
+let API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001/api';
+// Handle 'host' only format from Render (e.g. "service.onrender.com")
+if (import.meta.env.VITE_API_BASE_URL && !API_BASE.startsWith('http')) {
+  API_BASE = `https://${API_BASE}`;
+}
+// Append /api if missing (Render usually gives just the host)
+if (import.meta.env.VITE_API_BASE_URL && !API_BASE.endsWith('/api')) {
+  API_BASE = `${API_BASE}/api`;
+}
 
 // =================================================================================================
 // Token Listener Helper

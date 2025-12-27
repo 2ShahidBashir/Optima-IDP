@@ -18,7 +18,7 @@ services:
         fromService:
           type: web
           name: optima-frontend
-          property: url
+          property: host
 
   # Frontend Service
   - type: web
@@ -31,4 +31,4 @@ services:
         fromService:
           type: web
           name: optima-backend
-          property: url
+          property: host
